@@ -29,6 +29,7 @@ export default function App() {
   const [isLoadingReports, setIsLoadingReports] = useState(false);
   const [customSheetId, setCustomSheetId] = useState<string>('');
   const [showConfigPanel, setShowConfigPanel] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // 1. Initialize Auth on mount
   useEffect(() => {
@@ -109,14 +110,24 @@ export default function App() {
   // Actions
   const handleLogin = async () => {
     setIsLoggingIn(true);
+    setLoginError(null);
     try {
       const result = await googleSignIn();
       if (result) {
         setCurrentUser(result.user);
         setAccessToken(result.accessToken);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Login action failed:', err);
+      let friendlyMessage = err?.message || 'Gagal masuk dengan Google.';
+      if (err?.code === 'auth/popup-blocked' || err?.message?.includes('popup') || err?.message?.includes('blocked')) {
+        friendlyMessage = 'Jendela login diblokir oleh browser. Silakan klik tombol "Buka Aplikasi di Tab Baru" di bawah ini agar Google Auth dapat terbuka dengan aman.';
+      } else if (err?.code === 'auth/network-request-failed') {
+        friendlyMessage = 'Masalah koneksi jaringan terdeteksi. Silakan periksa jaringan internet Anda.';
+      } else if (err?.message?.includes('iframe') || err?.message?.includes('cross-origin')) {
+        friendlyMessage = 'Kebijakan privasi browser membatasi aktivitas masuk di dalam Frame. Silakan gunakan tautan "Buka Aplikasi di Tab Baru" di bawah.';
+      }
+      setLoginError(friendlyMessage);
     } finally {
       setIsLoggingIn(false);
     }
@@ -244,6 +255,32 @@ export default function App() {
               </span>
             </div>
           </button>
+
+          {/* New Helpful error display & manual tab-open link */}
+          {loginError && (
+            <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl text-left">
+              <div className="flex gap-2 text-amber-800 text-xs font-semibold mb-1.5">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                <span>Kendala Masuk (Keamanan Iframe):</span>
+              </div>
+              <p className="text-[11px] text-amber-700 leading-normal mb-3">
+                {loginError}
+              </p>
+              <a
+                href={window.location.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-2 px-3 bg-indigo-650 hover:bg-indigo-600 text-white rounded-lg text-[11px] font-bold text-center block transition duration-150 active:scale-95 shadow-sm"
+              >
+                Buka Aplikasi di Tab Baru ↗
+              </a>
+            </div>
+          )}
+
+          {/* Tips underneath for normal flow */}
+          <div className="mt-5 text-[10px] text-slate-400 font-medium leading-normal bg-slate-50/50 p-2.5 rounded-xl border border-slate-100">
+            💡 <strong className="text-slate-650">Tips Praktis:</strong> Bila browser memblokir popup Google Sign-In saat tombol diklik, coba klik tombol <a href={window.location.href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline font-bold">Buka di Tab Baru</a> di kanan atas pratinjau ini or tombol di atas untuk masuk langsung tanpa kendala.
+          </div>
         </div>
       </div>
     );
