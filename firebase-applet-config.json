@@ -3,6 +3,7 @@
   "appId": "1:438486213093:web:76094dd7f37770a00ccf0c",
   "apiKey": "AIzaSyDUPFUFFBgDzwG8hUDTDgC9vdNrXxMJLKM",
   "authDomain": "effective-planet-p6tp2.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-cb5b3604-8809-4234-9d4c-475fbcbfaa45",
   "storageBucket": "effective-planet-p6tp2.firebasestorage.app",
   "messagingSenderId": "438486213093",
   "measurementId": ""
