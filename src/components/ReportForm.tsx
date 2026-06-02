@@ -93,6 +93,15 @@ export default function ReportForm({ user, workspaceConfig, accessToken, onRepor
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
   // Handle performance report submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,8 +130,18 @@ export default function ReportForm({ user, workspaceConfig, accessToken, onRepor
     setInfoMessage(null);
 
     try {
-      // 1. Upload the image directly to user's Google Drive
-      const uploadResult = await uploadPhotoToDrive(accessToken, workspaceConfig.folderId, selectedFile);
+      let uploadResult = { fileId: '', webViewLink: '' };
+
+      if (accessToken === 'local-storage-token') {
+        const base64Str = await fileToBase64(selectedFile);
+        uploadResult = {
+          fileId: 'local-' + Date.now(),
+          webViewLink: base64Str,
+        };
+      } else {
+        // 1. Upload the image directly to user's Google Drive
+        uploadResult = await uploadPhotoToDrive(accessToken, workspaceConfig.folderId, selectedFile);
+      }
       
       // 2. Build DailyReport structure
       const reportId = 'LKK-' + Math.random().toString(36).substr(2, 9).toUpperCase();
@@ -139,15 +158,33 @@ export default function ReportForm({ user, workspaceConfig, accessToken, onRepor
         status
       };
 
-      // 3. Append row in Sheets database
-      await addReport(accessToken, workspaceConfig.spreadsheetId, newReport);
+      if (accessToken === 'local-storage-token') {
+        // Save using local storage database
+        const localDataRaw = localStorage.getItem('local_daily_reports_db');
+        let localReports = [];
+        if (localDataRaw) {
+          try {
+            localReports = JSON.parse(localDataRaw);
+          } catch (_) {}
+        }
+        localReports.unshift(newReport);
+        localStorage.setItem('local_daily_reports_db', JSON.stringify(localReports));
+      } else {
+        // 3. Append row in Sheets database
+        await addReport(accessToken, workspaceConfig.spreadsheetId, newReport);
+      }
 
       // success state resets
       setNamaTugas('');
       setDeskripsiProgres('');
       setSelectedFile(null);
       setJam(getCurrentTime());
-      setInfoMessage({ type: 'success', text: 'Laporan kinerja harian Anda berhasil terkirim dan sinkron secara real-time ke Google Sheets!' });
+      setInfoMessage({ 
+        type: 'success', 
+        text: accessToken === 'local-storage-token'
+          ? 'Laporan kinerja harian Anda berhasil tersimpan secara lokal di browser Anda!'
+          : 'Laporan kinerja harian Anda berhasil terkirim dan sinkron secara real-time ke Google Sheets!' 
+      });
       onReportAdded();
     } catch (err: any) {
       console.error(err);

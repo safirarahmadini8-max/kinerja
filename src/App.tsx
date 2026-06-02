@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import { User } from 'firebase/auth';
 import { initAuth, googleSignIn, logout } from './auth';
 import { findOrCreateDatabase, getReports } from './lib/sheetsService';
@@ -9,11 +9,20 @@ import ReportHistory from './components/ReportHistory';
 import { FileSpreadsheet, LogOut, Database, User as UserIcon, Link2, Sparkles, RefreshCw, AlertCircle } from 'lucide-react';
 
 export default function App() {
+  // Method selection state: 'local' (offline local storage) or 'google' (online Workspace Sheets)
+  const [dbMode, setDbMode] = useState<'google' | 'local'>(() => {
+    return (localStorage.getItem('preferred_db_mode') as 'google' | 'local') || 'local';
+  });
+
   // Authentication & session state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // Offline Login Input State
+  const [localName, setLocalName] = useState('');
+  const [localEmail, setLocalEmail] = useState('');
 
   // Database Connection State
   const [workspaceConfig, setWorkspaceConfig] = useState<WorkspaceConfig>({
@@ -31,26 +40,63 @@ export default function App() {
   const [showConfigPanel, setShowConfigPanel] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
+  // Keep preferred db mode in localStorage
+  const handleSetDbMode = (mode: 'google' | 'local') => {
+    setDbMode(mode);
+    localStorage.setItem('preferred_db_mode', mode);
+    setLoginError(null);
+  };
+
   // 1. Initialize Auth on mount
   useEffect(() => {
-    const unsubscribe = initAuth(
-      (user, token) => {
-        setCurrentUser(user);
-        setAccessToken(token);
-        setAuthChecking(false);
-      },
-      () => {
+    if (dbMode === 'local') {
+      const cachedLocalUser = localStorage.getItem('local_user_session');
+      if (cachedLocalUser) {
+        try {
+          const parsed = JSON.parse(cachedLocalUser);
+          setCurrentUser(parsed);
+          setAccessToken('local-storage-token');
+        } catch (_) {
+          setCurrentUser(null);
+          setAccessToken(null);
+        }
+      } else {
         setCurrentUser(null);
         setAccessToken(null);
-        setAuthChecking(false);
       }
-    );
-    return () => unsubscribe();
-  }, []);
+      setAuthChecking(false);
+    } else {
+      setAuthChecking(true);
+      const unsubscribe = initAuth(
+        (user, token) => {
+          setCurrentUser(user);
+          setAccessToken(token);
+          setAuthChecking(false);
+        },
+        () => {
+          setCurrentUser(null);
+          setAccessToken(null);
+          setAuthChecking(false);
+        }
+      );
+      return () => unsubscribe();
+    }
+  }, [dbMode]);
 
   // 2. Initialize Database and folders once authenticated
   useEffect(() => {
     if (!currentUser || !accessToken) return;
+
+    if (accessToken === 'local-storage-token') {
+      setWorkspaceConfig({
+        spreadsheetId: 'local-storage-db',
+        spreadsheetUrl: '',
+        folderId: 'local-folder-id',
+        isInitializing: false,
+        error: null,
+      });
+      return;
+    }
 
     const setupDatabase = async () => {
       setWorkspaceConfig((prev) => ({ ...prev, isInitializing: true, error: null }));
@@ -88,7 +134,26 @@ export default function App() {
 
   // 3. Load reports when spreadsheet connection is ready
   const fetchReportData = async () => {
-    if (!accessToken || !workspaceConfig.spreadsheetId) return;
+    if (!accessToken) return;
+
+    if (accessToken === 'local-storage-token') {
+      setIsLoadingReports(true);
+      try {
+        const localDataRaw = localStorage.getItem('local_daily_reports_db');
+        if (localDataRaw) {
+          setReports(JSON.parse(localDataRaw));
+        } else {
+          setReports([]);
+        }
+      } catch (err) {
+        console.error('Failed to fetch local reports:', err);
+      } finally {
+        setIsLoadingReports(false);
+      }
+      return;
+    }
+
+    if (!workspaceConfig.spreadsheetId) return;
 
     setIsLoadingReports(true);
     try {
@@ -133,9 +198,31 @@ export default function App() {
     }
   };
 
+  const handleLocalLogin = (e: FormEvent) => {
+    e.preventDefault();
+    if (!localName.trim() || !localEmail.trim()) {
+      alert('Harap masukkan nama dan email karyawan!');
+      return;
+    }
+    const virtualUser = {
+      displayName: localName.trim(),
+      email: localEmail.trim().toLowerCase(),
+      photoURL: null,
+      uid: 'offline-' + Math.random().toString(36).substr(2, 9),
+    } as any;
+
+    localStorage.setItem('local_user_session', JSON.stringify(virtualUser));
+    setCurrentUser(virtualUser);
+    setAccessToken('local-storage-token');
+  };
+
   const handleLogout = async () => {
     if (window.confirm('Apakah Anda yakin ingin keluar dari aplikasi?')) {
-      await logout();
+      if (accessToken === 'local-storage-token') {
+        localStorage.removeItem('local_user_session');
+      } else {
+        await logout();
+      }
       setCurrentUser(null);
       setAccessToken(null);
       setReports([]);
@@ -191,96 +278,162 @@ export default function App() {
       <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center p-6">
         <div className="w-full max-w-md bg-white border border-slate-100/80 rounded-2xl p-8 shadow-sm text-center">
           {/* Visual Header Icon Branding */}
-          <div className="inline-flex p-3 bg-gradient-to-tr from-indigo-500 to-indigo-600 text-white rounded-2xl mb-5 shadow-md">
+          <div className="inline-flex p-3 bg-gradient-to-tr from-indigo-500 to-indigo-600 text-white rounded-2xl mb-5 shadow-md font-sans">
             <FileSpreadsheet className="w-8 h-8" />
           </div>
 
-          <h1 className="text-2xl font-bold text-slate-800 tracking-tight leading-none mb-2">Laporan Kinerja Harian</h1>
-          <p className="text-xs text-slate-400 font-medium">Bekerja Cerdas, Transparan, & Real-Time</p>
+          <h1 className="text-2xl font-bold text-slate-800 tracking-tight leading-none mb-1">Laporan Kinerja Harian</h1>
+          <p className="text-xs text-slate-400 font-medium mb-5">Sistem Pencatatan Progres Real-Time & Transparan</p>
 
-          <div className="my-6 py-4.5 px-4 bg-slate-50 rounded-xl text-left border border-slate-100">
-            <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-pulse-slow" />
-              Fitur Utama Aplikasi:
-            </h4>
-            <ul className="text-[11px] text-slate-500 font-medium space-y-1.5">
-              <li className="flex gap-1.5">
-                <span className="text-indigo-500 font-bold">•</span>
-                Tanggal & Jam otomatis tersinkron dengan waktu setempat.
-              </li>
-              <li className="flex gap-1.5">
-                <span className="text-indigo-500 font-bold">•</span>
-                Unggah lampiran foto bukti tugas langsung dari file penyimpanan Anda.
-              </li>
-              <li className="flex gap-1.5">
-                <span className="text-indigo-500 font-bold">•</span>
-                Ambil foto kamera secara lurus & instan dari webcam Anda.
-              </li>
-              <li className="flex gap-1.5">
-                <span className="text-indigo-500 font-bold">•</span>
-                Database cloud terintegrasi langsung di Google Sheets milik Anda sendiri.
-              </li>
-            </ul>
+          {/* Database Mode Segmented Tab Selector */}
+          <div className="flex bg-slate-100/80 p-1 rounded-xl mb-6 border border-slate-200/40">
+            <button
+              type="button"
+              onClick={() => handleSetDbMode('local')}
+              className={`flex-1 py-2 text-[11px] font-extrabold rounded-lg transition-all cursor-pointer ${
+                dbMode === 'local'
+                  ? 'bg-white text-indigo-600 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              Penyimpanan Lokal (Bebas Firebase)
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetDbMode('google')}
+              className={`flex-1 py-2 text-[11px] font-extrabold rounded-lg transition-all cursor-pointer ${
+                dbMode === 'google'
+                  ? 'bg-white text-indigo-600 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              Google Sheets (Online)
+            </button>
           </div>
 
-          <p className="text-xs text-slate-400 mb-6 px-1 leading-relaxed">
-            Silakan masuk menggunakan Akun Google Anda untuk menghubungkan log laporan dengan Spreadsheet & Drive pribadi atau tim Anda.
-          </p>
-
-          {/* Authentic Google Sign-in material button */}
-          <button
-            onClick={handleLogin}
-            disabled={isLoggingIn}
-            className={`gsi-material-button w-full justify-center flex items-center ${
-              isLoggingIn ? 'opacity-80 cursor-not-allowed' : ''
-            }`}
-          >
-            <div className="gsi-material-button-state"></div>
-            <div className="gsi-material-button-content-wrapper">
-              <div className="gsi-material-button-icon">
-                {isLoggingIn ? (
-                  <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
-                ) : (
-                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style={{ display: 'block' }}>
-                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                    <path fill="none" d="M0 0h48v48H0z"></path>
-                  </svg>
-                )}
+          {dbMode === 'local' ? (
+            /* Local / Offline database signup session form */
+            <form onSubmit={handleLocalLogin} className="space-y-4 text-left animate-fade-in">
+              <div className="p-3.5 bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-xl text-[11px] font-medium leading-relaxed">
+                🌱 <strong>Mode Bebas Firebase Aktif:</strong> Laporan disimpan langsung di browser local storage Anda. 100% lancar, tanpa login Google, dan Anda tetap dapat mengunduh database dalam format <strong>Excel (.CSV)</strong> kapan saja!
               </div>
-              <span className="gsi-material-button-contents text-xs font-bold font-sans">
-                {isLoggingIn ? 'Membuka Jendela Masuk...' : 'Masuk dengan Google'}
-              </span>
-            </div>
-          </button>
 
-          {/* New Helpful error display & manual tab-open link */}
-          {loginError && (
-            <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl text-left">
-              <div className="flex gap-2 text-amber-800 text-xs font-semibold mb-1.5">
-                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-                <span>Kendala Masuk (Keamanan Iframe):</span>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Nama Lengkap Karyawan *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Masukkan nama lengkap Anda..."
+                  value={localName}
+                  onChange={(e) => setLocalName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-705 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold"
+                />
               </div>
-              <p className="text-[11px] text-amber-700 leading-normal mb-3">
-                {loginError}
-              </p>
-              <a
-                href={window.location.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full py-2 px-3 bg-indigo-650 hover:bg-indigo-600 text-white rounded-lg text-[11px] font-bold text-center block transition duration-150 active:scale-95 shadow-sm"
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Email Karyawan *</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="alamat.email@perusahaan.com"
+                  value={localEmail}
+                  onChange={(e) => setLocalEmail(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-705 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.8 px-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition duration-300 shadow-sm shadow-indigo-100 cursor-pointer flex items-center justify-center gap-2 uppercase tracking-wider"
               >
-                Buka Aplikasi di Tab Baru ↗
-              </a>
+                Mulai Isi Progres Laporan
+              </button>
+            </form>
+          ) : (
+            /* Default Google Sheets workspace dynamic form */
+            <div className="animate-fade-in text-center">
+              <div className="my-5 py-4 px-4 bg-slate-50 rounded-xl text-left border border-slate-100">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-pulse-slow" />
+                  Fitur Utama Aplikasi:
+                </h4>
+                <ul className="text-[11px] text-slate-500 font-medium space-y-1.5">
+                  <li className="flex gap-1.5">
+                    <span className="text-indigo-500 font-bold">•</span>
+                    Tanggal & jam tercatat otomatis secara akurat.
+                  </li>
+                  <li className="flex gap-1.5">
+                    <span className="text-indigo-500 font-bold">•</span>
+                    Lampirkan file foto progres pekerjaan or tangkapan webcam instan.
+                  </li>
+                  <li className="flex gap-1.5">
+                    <span className="text-indigo-500 font-bold">•</span>
+                    Tulis laporan Anda, data sinkron langsung ke spreadsheet Google Sheets.
+                  </li>
+                </ul>
+              </div>
+
+              <p className="text-xs text-slate-405 mb-5 px-1 leading-relaxed">
+                Silakan masuk menggunakan Akun Google Anda untuk menghubungkan laporan dengan Spreadsheet & Drive milik Anda sendiri.
+              </p>
+
+              {/* Authentic Google Sign-in material button */}
+              <button
+                type="button"
+                onClick={handleLogin}
+                disabled={isLoggingIn}
+                className={`gsi-material-button w-full justify-center flex items-center cursor-pointer ${
+                  isLoggingIn ? 'opacity-80 cursor-not-allowed' : ''
+                }`}
+              >
+                <div className="gsi-material-button-state"></div>
+                <div className="gsi-material-button-content-wrapper">
+                  <div className="gsi-material-button-icon">
+                    {isLoggingIn ? (
+                      <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
+                    ) : (
+                      <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style={{ display: 'block' }}>
+                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                        <path fill="none" d="M0 0h48v48H0z"></path>
+                      </svg>
+                    )}
+                  </div>
+                  <span className="gsi-material-button-contents text-xs font-bold font-sans">
+                    {isLoggingIn ? 'Membuka Jendela Masuk...' : 'Masuk dengan Google'}
+                  </span>
+                </div>
+              </button>
+
+              {/* Helpful error display & manual tab-open link */}
+              {loginError && (
+                <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl text-left">
+                  <div className="flex gap-2 text-amber-800 text-xs font-semibold mb-1.5">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                    <span>Kendala Masuk (Iframe Security):</span>
+                  </div>
+                  <p className="text-[11px] text-amber-750 leading-normal mb-3">
+                    {loginError}
+                  </p>
+                  <a
+                    href={window.location.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold text-center block transition duration-150 active:scale-95 shadow-sm"
+                  >
+                    Buka Aplikasi di Tab Baru ↗
+                  </a>
+                </div>
+              )}
+
+              {/* Tips underneath for normal flow */}
+              <div className="mt-5 text-[10px] text-slate-400 font-medium leading-normal bg-slate-50/50 p-2.5 rounded-xl border border-slate-100">
+                💡 <strong className="text-slate-650">Tips Praktis:</strong> Bila google login memunculkan kendala domain tidak sah (unauthorized-domain), itu karena domain sandbox. Anda bisa menggunakan opsi <strong>Penyimpanan Lokal</strong> di tab atas untuk pencatatan instan tanpa Firebase!
+              </div>
             </div>
           )}
-
-          {/* Tips underneath for normal flow */}
-          <div className="mt-5 text-[10px] text-slate-400 font-medium leading-normal bg-slate-50/50 p-2.5 rounded-xl border border-slate-100">
-            💡 <strong className="text-slate-650">Tips Praktis:</strong> Bila browser memblokir popup Google Sign-In saat tombol diklik, coba klik tombol <a href={window.location.href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline font-bold">Buka di Tab Baru</a> di kanan atas pratinjau ini or tombol di atas untuk masuk langsung tanpa kendala.
-          </div>
         </div>
       </div>
     );
@@ -370,38 +523,42 @@ export default function App() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h4 className="text-xs font-bold text-slate-800 truncate">Laporan Kinerja Harian (Database)</h4>
-                  <span className="text-[9px] bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full font-bold border border-emerald-100">
-                    Akun Aktif: {currentUser.email}
+                  <span className="text-[9px] bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full font-bold border border-emerald-100 uppercase tracking-wider font-mono">
+                    {accessToken === 'local-storage-token' ? 'Penyimpanan Lokal (Bebas Firebase)' : `Google Sheets: ${currentUser.email}`}
                   </span>
                 </div>
                 <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">
-                  Disimpan otomatis di Drive Anda. Seluruh entri laporan dicatat di Google Sheets secara real-time.
+                  {accessToken === 'local-storage-token'
+                    ? 'Disimpan 100% aman di browser Anda secara offline. Gunakan tombol "Unduh CSV" di riwayat untuk memindahkan ke Excel.'
+                    : 'Disimpan otomatis di Drive Anda. Seluruh entri laporan dicatat di Google Sheets secara real-time.'}
                 </p>
               </div>
             </div>
 
             {/* Custom sheet ID controller or Direct Link */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={() => setShowConfigPanel(!showConfigPanel)}
-                className="text-[10px] font-bold text-slate-500 hover:text-indigo-600 underline cursor-pointer"
-              >
-                {showConfigPanel ? 'Sembunyikan Panel ID' : 'Gunakan ID Spreadsheet Bersama'}
-              </button>
-
-              {workspaceConfig.spreadsheetUrl && (
-                <a
-                  href={workspaceConfig.spreadsheetUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition flex items-center gap-1.5 cursor-pointer"
+            {accessToken !== 'local-storage-token' && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setShowConfigPanel(!showConfigPanel)}
+                  className="text-[10px] font-bold text-slate-500 hover:text-indigo-600 underline cursor-pointer"
                 >
-                  <Link2 className="w-3.5 h-3.5" />
-                  Buka Spreadsheet
-                </a>
-              )}
-            </div>
+                  {showConfigPanel ? 'Sembunyikan Panel ID' : 'Gunakan ID Spreadsheet Bersama'}
+                </button>
+
+                {workspaceConfig.spreadsheetUrl && (
+                  <a
+                    href={workspaceConfig.spreadsheetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Link2 className="w-3.5 h-3.5" />
+                    Buka Spreadsheet
+                  </a>
+                )}
+              </div>
+            )}
           </div>
         )}
 
