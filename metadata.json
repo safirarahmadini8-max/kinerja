@@ -1,0 +1,6 @@
+{
+  "name": "Laporan Kinerja Harian",
+  "description": "Aplikasi pelaporan kinerja harian karyawan dengan database Google Sheets, dilengkapi dengan jam, tanggal, tugas, deskripsi progres, dan lampiran foto.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
