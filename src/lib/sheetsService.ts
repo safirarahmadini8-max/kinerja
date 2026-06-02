@@ -41,6 +41,26 @@ async function findOrCreateFolder(token: string, folderName: string): Promise<st
 }
 
 /**
+ * Helper to dynamically get the first sheet's title in a Google Spreadsheet.
+ * This is crucial in non-English Google Accounts where the first sheet might be called "Lembar1" or "Sheet 1".
+ */
+export async function getFirstSheetName(token: string, spreadsheetId: string): Promise<string> {
+  try {
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return 'Sheet1';
+    const data = await res.json();
+    if (data.sheets && data.sheets.length > 0) {
+      return data.sheets[0].properties.title || 'Sheet1';
+    }
+  } catch (error) {
+    console.error('Error getting sheet name:', error);
+  }
+  return 'Sheet1';
+}
+
+/**
  * Initialize the spreadsheet headers
  */
 async function initializeHeaders(token: string, spreadsheetId: string): Promise<void> {
@@ -57,7 +77,8 @@ async function initializeHeaders(token: string, spreadsheetId: string): Promise<
     'Status'
   ];
 
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sheet1!A1:J1?valueInputOption=USER_ENTERED`;
+  const sheetName = await getFirstSheetName(token, spreadsheetId);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:J1?valueInputOption=USER_ENTERED`;
 
   const res = await fetch(url, {
     method: 'PUT',
@@ -110,6 +131,13 @@ export async function findOrCreateDatabase(token: string): Promise<WorkspaceConf
           properties: {
             title: 'Laporan Kinerja Harian (Database)',
           },
+          sheets: [
+            {
+              properties: {
+                title: 'Sheet1'
+              }
+            }
+          ]
         }),
       });
 
@@ -150,9 +178,10 @@ export async function findOrCreateDatabase(token: string): Promise<WorkspaceConf
  * Fetch reports from Google Sheets database
  */
 export async function getReports(token: string, spreadsheetId: string): Promise<DailyReport[]> {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sheet1!A2:J1000`;
-
   try {
+    const sheetName = await getFirstSheetName(token, spreadsheetId);
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A2:J1000`;
+
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -196,7 +225,8 @@ export async function addReport(
   spreadsheetId: string,
   report: DailyReport
 ): Promise<void> {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Sheet1!A:J:append?valueInputOption=USER_ENTERED`;
+  const sheetName = await getFirstSheetName(token, spreadsheetId);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:J:append?valueInputOption=USER_ENTERED`;
 
   const bodyData = {
     values: [
